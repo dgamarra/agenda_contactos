@@ -1,0 +1,12 @@
+{
+  "name": "agenda-contactos-e2e",
+  "version": "1.0.0",
+  "description": "Tests E2E con Cypress",
+  "scripts": {
+    "test": "cypress run",
+    "test:open": "cypress open"
+  },
+  "devDependencies": {
+    "cypress": "^13.6.2"
+  }
+}

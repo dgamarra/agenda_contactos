@@ -1,0 +1,45 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: agenda-mongodb
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: agenda-backend
+    restart: always
+    environment:
+      - PORT=5000
+      - MONGODB_URI=mongodb://admin:admin123@mongodb:27017/agenda_contactos?authSource=admin
+      - JWT_SECRET=agenda_jwt_secret_production_2024
+      - NODE_ENV=production
+      - JWT_EXPIRE=7d
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongodb
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: agenda-frontend
+    restart: always
+    environment:
+      - VITE_API_URL=/api
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongodb_data:
