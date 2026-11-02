@@ -1,0 +1,113 @@
+name: CI — Pruebas y actualización del repositorio remoto
+
+# Se dispara en push, pull_request y cada viernes a las 18:00 (hora de Lima, UTC-5)
+on:
+  push:
+  pull_request:
+  schedule:
+    # Lima es UTC-5 (sin horario de verano): 18:00 en Lima = 23:00 UTC
+    - cron: '0 23 * * 5' # Viernes 23:00 UTC = Viernes 18:00 en Lima
+  workflow_dispatch: # Ejecución manual desde GitHub
+
+# Permisos: contents: write permite hacer push al repositorio remoto
+permissions:
+  contents: write
+
+# Evita ejecuciones simultáneas sobre la misma referencia
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1) Ejecutar las pruebas (unitarias + integración)
+  # ──────────────────────────────────────────────
+  pruebas:
+    name: Pruebas unitarias y de integración
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JWT_SECRET: test-secret
+      NODE_ENV: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Instalar dependencias del backend
+        working-directory: backend
+        run: npm ci
+
+      - name: Ejecutar pruebas (unitarias + integración)
+        working-directory: backend
+        run: >
+          npx jest
+          --coverage
+          --detectOpenHandles
+          --coverageReporters=text
+          --coverageReporters=lcov
+          --coverageReporters=json-summary
+
+      - name: Subir informe de cobertura como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: backend/coverage/
+          retention-days: 7
+
+  # ──────────────────────────────────────────────
+  # 2) Actualizar el repositorio remoto SOLO si las pruebas pasaron
+  # ──────────────────────────────────────────────
+  actualizar-remoto:
+    name: Actualizar repositorio remoto
+    needs: pruebas # Espera a que las pruebas terminen
+    # Condición: solo si todo salió bien, nunca en pull_request
+    # y nunca cuando el propio bot dispara el evento (evita bucles)
+    if: >-
+      success() &&
+      github.event_name != 'pull_request' &&
+      github.actor != 'github-actions[bot]' &&
+      github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Descargar informe de cobertura
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage
+          path: backend/coverage
+
+      - name: Generar resumen de cobertura
+        run: node scripts/generate-coverage-summary.js
+
+      - name: Commit y push solo si hay cambios
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add docs/coverage-summary.md
+
+          if git diff --cached --quiet; then
+            echo "La cobertura no ha cambiado: no hay nada que actualizar."
+            exit 0
+          fi
+
+          git commit -m "chore: actualiza informe de cobertura [skip ci]"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
